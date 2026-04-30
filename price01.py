@@ -5,110 +5,119 @@ from io import BytesIO
 from datetime import datetime
 import os
 
+# ==========================================
+# 1. 页面基础配置 (现代化极简风格)
+# ==========================================
 st.set_page_config(page_title="西州将军门业 - 自动化报价系统", layout="wide")
 
+st.title("📊 西州门业报价单生成器")
+st.markdown("在这里输入数据，系统将自动注入到您的专属 Excel 模板中，保证 100% 格式无损。")
+
 # ==========================================
-# 1. 读取数据库
+# 2. 读取产品数据库
 # ==========================================
 if not os.path.exists("library.csv"):
-    st.error("找不到 library.csv 产品库文件！")
+    st.error("⚠️ 找不到 library.csv 产品库文件！请确保它与代码在同一目录下。")
     st.stop()
 
 df_library = pd.read_csv("library.csv")
 product_names = df_library['name'].tolist()
 
 # ==========================================
-# 2. 网页控制面板 (极简数据录入)
+# 3. 网页控制面板 (数据录入区)
 # ==========================================
-st.title("📊 西州门业报价单生成器 (直控 Excel 版)")
-st.markdown("在这里输入数据，系统将自动注入到您的专属 Excel 模板中，保证 100% 格式无损。")
-
-with st.expander("📝 第一步：基础信息", expanded=True):
+with st.expander("📝 第一步：基础信息录入", expanded=True):
     col1, col2, col3 = st.columns(3)
     with col1:
-        customer = st.text_input("客户名称 (致)", "张仕玉")
+        customer = st.text_input("客户名称 (致)", placeholder="例如：张仕玉")
     with col2:
-        project = st.text_input("项目名称", "龙井村322号")
+        project = st.text_input("项目名称", placeholder="例如：龙井村322号")
     with col3:
-        date_str = st.date_input("日期").strftime("%Y.%m.%d")
+        date_str = st.date_input("报价日期").strftime("%Y.%m.%d")
 
-with st.expander("🛒 第二步：产品明细", expanded=True):
-    # 第一行产品
-    st.markdown("**产品 1**")
-    col_p1, col_l1, col_w1, col_qty1 = st.columns([3, 1, 1, 1])
-    with col_p1:
-        prod_1 = st.selectbox("选择型号", [""] + product_names, key="p1")
-    with col_l1:
-        l_1 = st.number_input("长(mm)", value=2480, key="l1")
-    with col_w1:
-        w_1 = st.number_input("宽(mm)", value=2690, key="w1")
-    with col_qty1:
-        qty_1 = st.number_input("数量", value=6.6712, format="%.4f", key="q1")
+with st.expander("🛒 第二步：产品明细录入", expanded=True):
+    st.markdown("**产品明细 (第 1 行)**")
+    col_p, col_l, col_w, col_dir, col_qty = st.columns([3, 1, 1, 1, 1])
     
-    # 自动带出单价和计算
-    price_1 = 0
-    if prod_1:
-        price_1 = df_library[df_library['name'] == prod_1]['price'].values[0]
-    total_1 = round(qty_1 * price_1)
+    with col_p:
+        prod_name = st.selectbox("选择品名型号", ["-- 请选择产品 --"] + product_names)
+    with col_l:
+        length = st.number_input("长 (mm)", value=2480, step=10)
+    with col_w:
+        width = st.number_input("宽 (mm)", value=2690, step=10)
+    with col_dir:
+        direction = st.selectbox("开启方向", ["内右开", "内左开", "外右开", "外左开"])
+    with col_qty:
+        qty = st.number_input("数量 (m²)", value=6.6712, format="%.4f")
     
-    if prod_1:
-        st.info(f"系统已自动带出单价：**{price_1}** 元，此行小计：**{total_1}** 元")
+    # 根据产品库自动带出单价
+    price = 0
+    if prod_name and prod_name != "-- 请选择产品 --":
+        price = df_library[df_library['name'] == prod_name]['price'].values[0]
+        st.success(f"✅ 已从库中匹配单价：**{price}** 元")
 
-# 计算总金额
-grand_total = total_1 # 如果有多行，这里累加
-st.subheader(f"💰 当前总计：{grand_total} 元")
+    total_amount = round(qty * price)
 
-# ==========================================
-# 3. 后台操控 Excel 核心逻辑
-# ==========================================
-# 数字转大写函数
+# 人民币转大写函数
 def numberToChinese(num):
-    # (此处省略大写转换代码，可以使用前面提供的，或者让Excel自带宏计算)
     d = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖']
     u = ['', '拾', '佰', '仟', '万', '拾', '佰', '仟', '亿']
     s = str(int(num))
     res = ''.join([d[int(s[i])] + u[len(s)-i-1] for i in range(len(s)) if s[i] != '0' or (len(s)-i-1) % 4 == 0]).replace('零零', '零').replace('零万', '万').replace('零亿', '亿')
     return res.rstrip('零') + "元整" if res else "零元整"
 
-if st.button("🚀 一键注入并下载 Excel 报价单", type="primary"):
+grand_total_chinese = numberToChinese(total_amount)
+
+# ==========================================
+# 4. 后台操控 Excel 核心逻辑 (坐标配置区)
+# ==========================================
+st.divider()
+if st.button("🚀 生成真实 Excel 报价单", type="primary", use_container_width=True):
     if not os.path.exists("template.xlsx"):
-        st.error("找不到 template.xlsx 模板文件！请将空白模板与代码放在一起。")
+        st.error("⚠️ 找不到 template.xlsx 模板文件！请将你的空白 Excel 模板上传到同级目录。")
     else:
         try:
             # 打开真正的 Excel 模板
             wb = openpyxl.load_workbook("template.xlsx")
             sheet = wb.active
             
-            # --- 精准注入数据 ---
-            # ⚠️ 注意：这里的单元格坐标（如 B3, C10）必须根据你真实的 template.xlsx 进行修改！
-            sheet['B3'] = customer       # 假设致客户在 B3
-            sheet['B4'] = project        # 项目名称
-            sheet['L3'] = date_str       # 日期
+            # ---------------------------------------------------------
+            # 🎯 核心修改区：请把下面括号里的坐标，改成你模板里真实的坐标
+            # ---------------------------------------------------------
+            # 基础信息
+            sheet['B3'] = customer       # 客户名称所在的格子 (例如 B3)
+            sheet['B4'] = project        # 项目名称所在的格子
+            sheet['K3'] = date_str       # 日期所在的格子
             
-            # 注入产品 1 (假设第一行数据在第 10 行)
-            if prod_1:
-                sheet['C10'] = prod_1
-                sheet['G10'] = l_1
-                sheet['I10'] = w_1
-                sheet['M10'] = qty_1
-                sheet['N10'] = price_1
-                sheet['O10'] = total_1
+            # 第一行明细 (假设在第10行)
+            if prod_name != "-- 请选择产品 --":
+                sheet['C10'] = prod_name     # 品名型号
+                sheet['G10'] = length        # 长
+                sheet['I10'] = width         # 宽
+                sheet['K10'] = direction     # 开启方向
+                sheet['M10'] = qty           # 数量
+                sheet['N10'] = price         # 单价
+                sheet['O10'] = total_amount  # 此行总价
             
-            # 注入合计和大写 (假设在 17, 20 行)
-            sheet['O17'] = grand_total
-            sheet['D20'] = numberToChinese(grand_total)
-            
+            # 底部合计 (假设蓝色合计在第17行，大写在第20行)
+            sheet['O17'] = total_amount
+            sheet['C20'] = grand_total_chinese
+            # ---------------------------------------------------------
+
             # 保存到内存
             output = BytesIO()
             wb.save(output)
             output.seek(0)
             
-            st.success("✅ Excel 注入成功！请点击下方按钮下载：")
+            st.balloons() # 放个气球庆祝一下
+            st.success("🎉 Excel 注入成功！排版 100% 完美，请点击下方按钮下载。")
+            
+            # 下载按钮
             st.download_button(
-                label="📥 下载西州门业报价单.xlsx",
+                label="📥 下载《西州将军门业报价单》.xlsx",
                 data=output,
-                file_name=f"报价单_{customer}.xlsx",
+                file_name=f"报价单_{customer}_{date_str}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
-            st.error(f"处理 Excel 时出错：{e}")
+            st.error(f"处理 Excel 时发生错误，请检查坐标是否填写正确：{e}")
