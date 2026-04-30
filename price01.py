@@ -1,84 +1,33 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
+import json
 
-# ==========================================
-# 1. 页面基础配置
-# ==========================================
-st.set_page_config(page_title="西州将军门业 - 智能报价系统", layout="wide")
+# --- 1. 页面级高级配置 ---
+st.set_page_config(page_title="西州将军门业 - 尊贵级报价系统", layout="wide")
 
-# ==========================================
-# 2. 读取/生成产品库
-# ==========================================
+# 加载自定义 CSS 以实现 Apple 式简约质感
+st.markdown("""
+    <style>
+    .main { background-color: #f5f5f7; }
+    .stButton>button { border-radius: 8px; width: 100%; height: 45px; background-color: #0071e3; color: white; font-weight: bold; border: none; }
+    .stButton>button:hover { background-color: #0077ed; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. 数据库逻辑 ---
 @st.cache_data
-def load_library():
-    if os.path.exists("library.csv"):
-        return pd.read_csv("library.csv")
-    else:
-        # 如果没有文件，自动生成一个默认测试库防报错
-        return pd.DataFrame({
-            "name": ["0.8的纯铜两定两开门", "0.8的不锈钢镀铜:正面1.2mm镀铜蚀刻", "暗合页（子母）", "门柱花件另加"],
-            "unit": ["m²", "m²", "套", "m²"],
-            "price": [6000, 1680, 1000, 2750]
-        })
+def load_db():
+    # 模拟从 library.csv 读取，若不存在则创建
+    return pd.DataFrame({
+        "name": ["0.8的纯铜两定两开门", "0.8的不锈钢镀铜:正面1.2mm镀铜蚀刻", "暗合页（子母）", "门柱花件另加"],
+        "unit": ["m²", "m²", "套", "m²"],
+        "price": [6000, 1680, 1000, 2750]
+    })
 
-df_lib = load_library()
-product_names = df_lib['name'].tolist()
+df_lib = load_db()
 
-# ==========================================
-# 3. 侧边栏：基础表头信息录入
-# ==========================================
-with st.sidebar:
-    st.header("📝 基础表头录入")
-    customer = st.text_input("致 (客户名称)", "张仕玉")
-    project = st.text_input("项目名称", "龙井村322号")
-    date_str = st.date_input("日期", datetime.today()).strftime("%Y.%m.%d")
-    fax = st.text_input("传真", "")
-    subject = st.text_input("主题", "")
-    st.info("提示：在此处修改客户信息，右侧报价单会自动更新。")
-
-# ==========================================
-# 4. 核心工作区：产品明细动态录入 (修复了报错)
-# ==========================================
-st.title("🛒 产品明细与报价单预览")
-st.caption("👇 在下方表格录入产品。点击表格底部的 **➕ 号** 可增加产品行；选中左侧序号按 **Delete 键** 可删除行。")
-
-# 【关键修复】：确保每次打开都有初始数据，防止 st.session_state 报错
-if 'quote_items' not in st.session_state:
-    st.session_state.quote_items = pd.DataFrame([{
-        "品名型号": "0.8的纯铜两定两开门", "长_mm": 2480, "宽_mm": 2690, 
-        "开启方向": "外右开", "单位": "m²", "数量": 6.6712, "单价": 6000.0
-    }])
-
-# 渲染高自由度编辑器
-edited_df = st.data_editor(
-    st.session_state.quote_items,
-    num_rows="dynamic", # 允许动态加项
-    column_config={
-        "品名型号": st.column_config.SelectboxColumn("品名型号", options=product_names, required=True, width="large"),
-        "开启方向": st.column_config.SelectboxColumn("开启方向", options=["内右开", "内左开", "外右开", "外左开", ""]),
-        "长_mm": st.column_config.NumberColumn("长(mm)", format="%d"),
-        "宽_mm": st.column_config.NumberColumn("宽(mm)", format="%d"),
-        "数量": st.column_config.NumberColumn("数量", format="%.4f"),
-        "单价": st.column_config.NumberColumn("单价", format="%.2f"),
-    },
-    use_container_width=True
-)
-
-# 联动逻辑与计算
-for idx, row in edited_df.iterrows():
-    # 如果用户选了库里的产品，自动带入单位
-    if pd.notna(row['品名型号']) and row['品名型号'] in product_names:
-        matched = df_lib[df_lib['name'] == row['品名型号']].iloc[0]
-        if pd.isna(row['单位']) or str(row['单位']).strip() == "":
-            edited_df.at[idx, '单位'] = matched['unit']
-            
-# 自动计算每行总价与合计总金额 (四舍五入到整数)
-edited_df['总金额'] = (edited_df['数量'] * edited_df['单价']).round(0).fillna(0).astype(int)
-grand_total = int(edited_df['总金额'].sum())
-
-# 数字转大写函数
+# --- 3. 业务逻辑：人民币大写转换 ---
 def to_chinese_upper(num):
     if num == 0: return "零元整"
     d = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖']
@@ -87,171 +36,102 @@ def to_chinese_upper(num):
     res = ''.join([d[int(s[i])] + u[len(s)-i-1] for i in range(len(s)) if s[i] != '0' or (len(s)-i-1) % 4 == 0]).replace('零零', '零').replace('零万', '万').replace('零亿', '亿')
     return res.rstrip('零') + "元整"
 
+# --- 4. 侧边栏：核心数据录入 ---
+st.sidebar.header("🏺 尊贵定制录入")
+customer = st.sidebar.text_input("致 (客户名称)", "张仕玉")
+project = st.sidebar.text_input("项目名称", "龙井村322号")
+date_str = st.sidebar.date_input("日期", datetime.today()).strftime("%Y.%m.%d")
+
+# --- 5. 多行动态加项逻辑 ---
+st.subheader("🛠️ 产品明细与工程参数")
+
+if 'rows' not in st.session_state:
+    st.session_state.rows = pd.DataFrame([{
+        "品名型号": "0.8的纯铜两定两开门", "长_mm": 2480, "宽_mm": 2690, 
+        "开启方向": "外右开", "单位": "m²", "数量": 6.6712, "单价": 6000.0
+    }])
+
+edited_df = st.data_editor(
+    st.session_state.rows,
+    num_rows="dynamic",
+    column_config={
+        "品名型号": st.column_config.SelectboxColumn("品名型号", options=df_lib['name'].tolist(), required=True),
+        "开启方向": st.column_config.SelectboxColumn("开启方向", options=["外右开", "内右开", "外左开", "内左开", ""]),
+        "数量": st.column_config.NumberColumn("数量", format="%.4f"),
+        "单价": st.column_config.NumberColumn("单价", format="%.2f")
+    },
+    use_container_width=True
+)
+
+# 自动计算金额
+edited_df['总金额'] = (edited_df['数量'] * edited_df['单价']).round(0).fillna(0).astype(int)
+grand_total = int(edited_df['总金额'].sum())
 total_upper = to_chinese_upper(grand_total)
 
-# ==========================================
-# 5. 生成 1:1 像素级排版与导出引擎
-# ==========================================
+# --- 6. 1:1 高清渲染模板 ---
 st.divider()
 
-# 动态生成表格的 HTML 行
 rows_html = ""
 for i, row in edited_df.iterrows():
-    p_name = row['品名型号'] if pd.notna(row['品名型号']) else ""
-    length = row['长_mm'] if pd.notna(row['长_mm']) else ""
-    width = row['宽_mm'] if pd.notna(row['宽_mm']) else ""
-    direction = row['开启方向'] if pd.notna(row['开启方向']) else ""
-    unit = row['单位'] if pd.notna(row['单位']) else ""
-    qty = f"{row['数量']:.4f}" if pd.notna(row['数量']) else ""
-    price = f"{row['单价']:.0f}" if pd.notna(row['单价']) else ""
-    total = row['总金额']
-
     rows_html += f"""
     <tr>
         <td>{i+1}</td>
-        <td style="text-align: left; padding-left: 5px; font-weight: bold;">{p_name}</td>
-        <td>{length}</td>
-        <td>{width}</td>
-        <td>{direction}</td>
-        <td>{unit}</td>
-        <td>{qty}</td>
-        <td>{price}</td>
-        <td style="font-weight: bold;">{total}</td>
+        <td style="text-align:left; font-weight:bold;">{row['品名型号']}</td>
+        <td>{row['长_mm']}</td><td>{row['宽_mm']}</td>
+        <td>{row['开启方向']}</td><td>{row['单位']}</td>
+        <td>{row['数量']}</td><td>{row['单价']}</td>
+        <td style="font-weight:bold;">{row['总金额']}</td>
     </tr>
     """
 
-# 补齐空白行（让表格看起来丰满，像原版 Excel，至少保留 4 行）
-empty_rows_needed = max(0, 4 - len(edited_df))
-for i in range(empty_rows_needed):
+# 补齐视觉空行
+for i in range(len(edited_df), 4):
     rows_html += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td>0.0000</td><td>0</td><td>0</td></tr>"
 
-# 完整的 HTML 模板 (完美对齐您的截图)
-html_template = f"""
+html_output = f"""
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        body {{ font-family: "SimSun", "STSong", serif; background-color: #f0f2f6; margin: 0; padding: 20px; }}
-        
-        /* 隐藏滚动条 */
-        ::-webkit-scrollbar {{ display: none; }}
-        
-        /* 导出按钮样式 */
-        .toolbar {{ text-align: center; margin-bottom: 20px; }}
-        .btn {{ padding: 12px 24px; margin: 0 10px; cursor: pointer; font-weight: bold; border: none; border-radius: 6px; font-size: 16px; color: white; }}
-        .btn-jpg {{ background-color: #ff4b4b; }}
-        .btn-pdf {{ background-color: #0071e3; }}
-
-        /* 打印时隐藏按钮，消除边距 */
-        @media print {{
-            .toolbar {{ display: none !important; }}
-            body {{ background-color: white; padding: 0; }}
-            #quote-paper {{ box-shadow: none !important; margin: 0 !important; width: 100% !important; }}
-        }}
-
-        /* 报价单白纸实体 */
-        #quote-paper {{
-            width: 860px; background-color: white; padding: 40px 50px; margin: 0 auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15); box-sizing: border-box; color: #000;
-        }}
-        
-        .main-title {{ text-align: left; font-size: 26px; font-weight: bold; font-family: "KaiTi", "Kaiti SC", serif; letter-spacing: 2px; margin-bottom: 10px; margin-left: 10%; font-style: italic; }}
-        
-        /* 严格还原您截图的表头网格对齐 */
-        .header-grid {{ display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; line-height: 1.6; margin-bottom: 10px; }}
-        
-        /* 表格样式 */
-        table {{ width: 100%; border-collapse: collapse; text-align: center; font-size: 14px; font-weight: bold; margin-bottom: 0; }}
-        th, td {{ border: 1.5px solid #000; padding: 6px 2px; height: 26px; }}
-        
-        .bg-blue {{ background-color: #00BFFF !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-        .text-red-box {{ color: red; font-weight: bold; text-align: center; padding: 8px; border: 1.5px solid #000; border-top: none; font-size: 14px; }}
-        .bg-yellow-box {{ background-color: #FFFF00 !important; color: red; font-weight: bold; text-align: left; padding: 8px 10px; border: 1.5px solid #000; border-top: none; font-size: 13px; line-height: 1.6; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-        .total-row {{ border: 1.5px solid #000; border-top: none; padding: 6px 10px; display: flex; justify-content: space-between; font-weight: bold; font-size: 15px; }}
+        #paper {{ width: 840px; background: white; padding: 45px; margin: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.1); font-family: "STSong", "SimSun", serif; color: #000; position: relative; }}
+        .title {{ text-align: left; font-size: 26px; font-weight: bold; margin-bottom: 20px; font-family: "KaiTi", serif; letter-spacing: 3px; font-style: italic; margin-left: 50px; }}
+        .header-box {{ display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; line-height: 1.8; }}
+        table {{ width: 100%; border-collapse: collapse; text-align: center; font-size: 14px; margin-top: 15px; border: 1.5px solid black; }}
+        th, td {{ border: 1.2px solid black; padding: 7px 2px; }}
+        .bg-blue {{ background-color: #00BFFF !important; font-weight: bold; }}
+        .bg-yellow {{ background-color: #FFFF00 !important; color: red; font-weight: bold; text-align: left; padding: 10px; font-size: 12px; line-height: 1.6; border: 1.5px solid black; border-top: none; }}
+        .red-note {{ color: red; font-weight: bold; text-align: center; border: 1.5px solid black; border-top: none; padding: 8px; font-size: 14px; }}
     </style>
 </head>
 <body>
-
-    <div class="toolbar">
-        <button class="btn btn-jpg" onclick="exportJPG()">📸 导出高清 JPG</button>
-        <button class="btn btn-pdf" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
-    </div>
-
-    <div id="quote-paper">
-        <div class="main-title">浙江西州将军门业有限公司</div>
-        
-        <div class="header-grid">
-            <div style="width: 55%;">
-                <div>致：{customer}</div>
-                <div>项目名称：{project}</div>
-                <div>启：</div>
-            </div>
-            <div style="width: 40%;">
-                <div>日期：{date_str}</div>
-                <div>传真：{fax}</div>
-                <div>主题：{subject}</div>
-            </div>
+    <div id="paper">
+        <div class="title">浙江西州将军门业有限公司</div>
+        <div class="header-box">
+            <div>致：{customer}<br>项目名称：{project}<br>启：</div>
+            <div style="text-align:right;">日期：{date_str}<br>传真：<br>主题：</div>
         </div>
-        
-        <div style="font-style: italic; font-weight: bold; font-size: 14px; margin-bottom: 10px; letter-spacing: 1px;">
-            承蒙关照，感谢贵方对我方产品感兴趣，根据贵方要求，报上我公司价格，可随时来电来函告知，我们将及时为您提供。
-        </div>
-
+        <div style="font-style:italic; font-weight:bold; font-size:14px; margin: 10px 0;">承蒙关照，感谢贵方对我方产品感兴趣...我们将及时为您提供。</div>
         <table>
-            <tr>
-                <th rowspan="2" width="5%" style="color: darkblue;">序号</th>
-                <th rowspan="2" width="30%" style="color: darkblue;">品名型号</th>
-                <th colspan="2" width="15%" style="color: darkblue;">规格</th>
-                <th rowspan="2" width="8%" style="color: darkblue;">开启方向</th>
-                <th rowspan="2" width="5%" style="color: darkblue;">单位</th>
-                <th rowspan="2" width="10%" style="color: darkblue;">数量</th>
-                <th rowspan="2" width="10%" style="color: darkblue;">单价</th>
-                <th rowspan="2" width="12%" style="color: darkblue;">总金额/元</th>
-            </tr>
-            <tr><th style="color: darkblue;">长</th><th style="color: darkblue;">宽</th></tr>
-            
+            <tr><th rowspan="2">序号</th><th rowspan="2" width="30%">品名型号</th><th colspan="2">规格</th><th rowspan="2">开启方向</th><th rowspan="2">单位</th><th rowspan="2">数量</th><th rowspan="2">单价</th><th rowspan="2">总金额</th></tr>
+            <tr><th>长</th><th>宽</th></tr>
             {rows_html}
-            
-            <tr class="bg-blue">
-                <td colspan="8" style="text-align: left; padding-left: 10px;">合计</td>
-                <td>{grand_total}</td>
-            </tr>
+            <tr class="bg-blue"><td colspan="8" style="text-align:left; padding-left:10px;">合计</td><td>{grand_total}</td></tr>
         </table>
-        
-        <div class="text-red-box">本报价为含税工厂结算价，不含木箱。如要木箱包装，另加100元一平方</div>
-        
-        <div class="total-row">
-            <span>合计总金额（大写）：</span>
-            <span style="letter-spacing: 2px;">{total_upper}</span>
-        </div>
-        
-        <div class="bg-yellow-box">
+        <div class="red-note">本报价为含税工厂结算价，不含木箱。如要木箱包装，另加100元一平方</div>
+        <div style="border:1.5px solid black; border-top:none; padding:8px; font-weight:bold;">合计总金额 (大写): <span style="margin-left:50px; letter-spacing: 2px;">{total_upper}</span></div>
+        <div class="bg-yellow">
             1. 付款方式: 确定制作，先安排货款50%的定金，款清发货<br>
             2. 以上价格不包含运费、安装调试费、测量等费用。<br>
-            3. 请及时确定签字回传，我司以收到贵方签字回传单以及保证金为准，方可安排生产<br>
-            <hr style="border: 0.5px solid red; margin: 4px 0;">
-            开票资料: 对公账户公司名称杭州浙家门业有限公司账户<br>
-            号码: 3301041060000451769<br>
-            开户银行: 杭州银行富阳支行<br>
-            法定代表人: 王家龙基本存款<br>
-            账户编号: J3310198780901<br>
-            <hr style="border: 0.5px solid red; margin: 4px 0;">
-            汇款请汇入以下账户<br>
-            户名：张春兰<br>
-            账号：622848 0329 2739 08775<br>
-            汇款行农业银行浙江省分行杭州市上泗支行
+            汇款账号：张春兰 622848 0329 2739 08775 (农业银行浙江省分行)
         </div>
     </div>
-
     <script>
-        function exportJPG() {{
-            const target = document.getElementById('quote-paper');
-            // scale: 2.5 保证截出来的图极其清晰
-            html2canvas(target, {{ scale: 2.5, useCORS: true, backgroundColor: "#ffffff" }}).then(canvas => {{
+        function saveAsJPG() {{
+            const target = document.getElementById('paper');
+            html2canvas(target, {{ scale: 2.5 }}).then(canvas => {{
                 const link = document.createElement('a');
-                link.download = '西州门业报价单_{customer}.jpg';
+                link.download = '西州报价单_{customer}.jpg';
                 link.href = canvas.toDataURL('image/jpeg', 1.0);
                 link.click();
             }});
@@ -261,5 +141,7 @@ html_template = f"""
 </html>
 """
 
-# 在界面中渲染最终的 HTML 画布
-st.components.v1.html(html_template, height=1150, scrolling=True)
+st.components.v1.html(html_output, height=1000, scrolling=True)
+
+if st.button("📸 导出高清尊贵版报价单 (JPG)"):
+    st.components.v1.html("<script>saveAsJPG();</script>", height=0)
