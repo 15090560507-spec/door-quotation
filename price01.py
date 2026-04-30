@@ -1,123 +1,143 @@
 import streamlit as st
 import pandas as pd
-import openpyxl
-from io import BytesIO
 from datetime import datetime
-import os
+import json
 
-# ==========================================
-# 1. 页面基础配置 (现代化极简风格)
-# ==========================================
-st.set_page_config(page_title="西州将军门业 - 自动化报价系统", layout="wide")
+# --- 1. 页面配置 ---
+st.set_page_config(page_title="西州将军门业 - 智能报价系统", layout="wide")
 
-st.title("📊 西州门业报价单生成器")
-st.markdown("在这里输入数据，系统将自动注入到您的专属 Excel 模板中，保证 100% 格式无损。")
+# --- 2. 加载产品库 ---
+@st.cache_data
+def load_library():
+    try:
+        return pd.read_csv("library.csv")
+    except:
+        return pd.DataFrame({"name": ["示例产品1", "示例产品2"], "unit": ["m²", "m²"], "price": [1000, 2000]})
 
-# ==========================================
-# 2. 读取产品数据库
-# ==========================================
-if not os.path.exists("library.csv"):
-    st.error("⚠️ 找不到 library.csv 产品库文件！请确保它与代码在同一目录下。")
-    st.stop()
+df_lib = load_library()
 
-df_library = pd.read_csv("library.csv")
-product_names = df_library['name'].tolist()
+# --- 3. 侧边栏：基础信息 ---
+st.sidebar.header("📋 基础信息")
+customer = st.sidebar.text_input("致 (客户)", "张仕玉")
+project = st.sidebar.text_input("项目名称", "龙井村322号")
+date_str = st.sidebar.date_input("日期", datetime.today()).strftime("%Y.%m.%d")
 
-# ==========================================
-# 3. 网页控制面板 (数据录入区)
-# ==========================================
-with st.expander("📝 第一步：基础信息录入", expanded=True):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        customer = st.text_input("客户名称 (致)", placeholder="例如：张仕玉")
-    with col2:
-        project = st.text_input("项目名称", placeholder="例如：龙井村322号")
-    with col3:
-        date_str = st.date_input("报价日期").strftime("%Y.%m.%d")
+# --- 4. 主界面：多行产品录入 ---
+st.header("🛒 产品明细录入")
+st.caption("提示：点击表格下方的 ➕ 可以增加新项；点击行号可删除。")
 
-with st.expander("🛒 第二步：产品明细录入", expanded=True):
-    st.markdown("**产品明细 (第 1 行)**")
-    col_p, col_l, col_w, col_dir, col_qty = st.columns([3, 1, 1, 1, 1])
-    
-    with col_p:
-        prod_name = st.selectbox("选择品名型号", ["-- 请选择产品 --"] + product_names)
-    with col_l:
-        length = st.number_input("长 (mm)", value=2480, step=10)
-    with col_w:
-        width = st.number_input("宽 (mm)", value=2690, step=10)
-    with col_dir:
-        direction = st.selectbox("开启方向", ["内右开", "内左开", "外右开", "外左开"])
-    with col_qty:
-        qty = st.number_input("数量 (m²)", value=6.6712, format="%.4f")
-    
-    # 根据产品库自动带出单价
-    price = 0
-    if prod_name and prod_name != "-- 请选择产品 --":
-        price = df_library[df_library['name'] == prod_name]['price'].values[0]
-        st.success(f"✅ 已从库中匹配单价：**{price}** 元")
+# 初始化表格数据
+if 'items' not in st.session_state:
+    st.session_state.items = pd.DataFrame([{
+        "品名型号": "0.8的纯铜两定两开门", "长": 2480, "宽": 2690, 
+        "开启方向": "内右开", "单位": "m²", "数量": 6.6712, "单价": 6000.0
+    }])
 
-    total_amount = round(qty * price)
+# 使用数据编辑器实现“加项”功能
+edited_df = st.data_editor(
+    st.session_state.items,
+    num_rows="dynamic", # 允许动态增加行
+    column_config={
+        "品名型号": st.column_config.SelectboxColumn("品名型号", options=df_lib['name'].tolist(), required=True),
+        "开启方向": st.column_config.SelectboxColumn("开启方向", options=["内右开", "内左开", "外右开", "外左开"]),
+        "数量": st.column_config.NumberColumn("数量", format="%.4f"),
+        "单价": st.column_config.NumberColumn("单价", format="%.2f"),
+    },
+    use_container_width=True,
+    key="data_editor"
+)
 
-# 人民币转大写函数
-def numberToChinese(num):
+# 自动计算逻辑 (金额计算)
+edited_df['总金额'] = (edited_df['数量'] * edited_df['单价']).round(0)
+grand_total = int(edited_df['总金额'].sum())
+
+# 数字转大写函数
+def to_chinese_upper(num):
     d = ['零', '壹', '贰', '叁', '肆', '伍', '陆', '柒', '捌', '玖']
     u = ['', '拾', '佰', '仟', '万', '拾', '佰', '仟', '亿']
     s = str(int(num))
     res = ''.join([d[int(s[i])] + u[len(s)-i-1] for i in range(len(s)) if s[i] != '0' or (len(s)-i-1) % 4 == 0]).replace('零零', '零').replace('零万', '万').replace('零亿', '亿')
-    return res.rstrip('零') + "元整" if res else "零元整"
+    return res.rstrip('零') + "元整"
 
-grand_total_chinese = numberToChinese(total_amount)
+total_upper = to_chinese_upper(grand_total)
 
-# ==========================================
-# 4. 后台操控 Excel 核心逻辑 (坐标配置区)
-# ==========================================
-st.divider()
-if st.button("🚀 生成真实 Excel 报价单", type="primary", use_container_width=True):
-    if not os.path.exists("template.xlsx"):
-        st.error("⚠️ 找不到 template.xlsx 模板文件！请将你的空白 Excel 模板上传到同级目录。")
-    else:
-        try:
-            # 打开真正的 Excel 模板
-            wb = openpyxl.load_workbook("template.xlsx")
-            sheet = wb.active
-            
-            # ---------------------------------------------------------
-            # 🎯 核心修改区：请把下面括号里的坐标，改成你模板里真实的坐标
-            # ---------------------------------------------------------
-            # 基础信息
-            sheet['B3'] = customer       # 客户名称所在的格子 (例如 B3)
-            sheet['B4'] = project        # 项目名称所在的格子
-            sheet['K3'] = date_str       # 日期所在的格子
-            
-            # 第一行明细 (假设在第10行)
-            if prod_name != "-- 请选择产品 --":
-                sheet['C10'] = prod_name     # 品名型号
-                sheet['G10'] = length        # 长
-                sheet['I10'] = width         # 宽
-                sheet['K10'] = direction     # 开启方向
-                sheet['M10'] = qty           # 数量
-                sheet['N10'] = price         # 单价
-                sheet['O10'] = total_amount  # 此行总价
-            
-            # 底部合计 (假设蓝色合计在第17行，大写在第20行)
-            sheet['O17'] = total_amount
-            sheet['C20'] = grand_total_chinese
-            # ---------------------------------------------------------
+# --- 5. 1:1 高清 HTML 预览与导出 ---
+# 将明细转换为 HTML 表格行
+rows_html = ""
+for i, row in edited_df.iterrows():
+    rows_html += f"""
+    <tr>
+        <td>{i+1}</td>
+        <td style="text-align:left;">{row['品名型号']}</td>
+        <td>{row['长']}</td><td>{row['宽']}</td>
+        <td>{row['开启方向']}</td><td>{row['单位']}</td>
+        <td>{row['数量']}</td><td>{row['单价']}</td>
+        <td>{int(row['总金额'])}</td>
+    </tr>
+    """
 
-            # 保存到内存
-            output = BytesIO()
-            wb.save(output)
-            output.seek(0)
-            
-            st.balloons() # 放个气球庆祝一下
-            st.success("🎉 Excel 注入成功！排版 100% 完美，请点击下方按钮下载。")
-            
-            # 下载按钮
-            st.download_button(
-                label="📥 下载《西州将军门业报价单》.xlsx",
-                data=output,
-                file_name=f"报价单_{customer}_{date_str}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        except Exception as e:
-            st.error(f"处理 Excel 时发生错误，请检查坐标是否填写正确：{e}")
+# 补全空行
+for i in range(len(edited_df), 5):
+    rows_html += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"
+
+html_template = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        .no-print {{ text-align: center; margin-bottom: 20px; }}
+        .btn {{ padding: 10px 20px; background: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }}
+        #pdf-btn {{ background: #0071e3; margin-left: 10px; }}
+        #paper {{ width: 850px; background: white; padding: 40px; margin: auto; font-family: "SimSun", serif; color: black; }}
+        table {{ width: 100%; border-collapse: collapse; text-align: center; font-size: 14px; }}
+        th, td {{ border: 1.5px solid black; padding: 6px; }}
+        .bg-blue {{ background: #00BFFF !important; font-weight: bold; }}
+        .bg-yellow {{ background: #FFFF00 !important; color: red; font-weight: bold; text-align: left; padding: 10px; font-size: 12px; border: 1.5px solid black; border-top: none; }}
+        @media print {{ .no-print {{ display: none; }} body {{ background: white; }} #paper {{ box-shadow: none; }} }}
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button class="btn" onclick="exportJPG()">📸 点击下载高清 JPG</button>
+        <button class="btn" id="pdf-btn" onclick="window.print()">🖨️ 打印 / 导出 PDF</button>
+    </div>
+    <div id="paper">
+        <h2 style="text-align:center; letter-spacing: 2px;">浙江西州将军门业有限公司</h2>
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px; font-weight:bold;">
+            <div>致：{customer}<br>项目名称：{project}</div>
+            <div style="text-align:right;">日期：{date_str}</div>
+        </div>
+        <table>
+            <tr><th rowspan="2">序号</th><th rowspan="2" width="30%">品名型号</th><th colspan="2">规格</th><th rowspan="2">开启方向</th><th rowspan="2">单位</th><th rowspan="2">数量</th><th rowspan="2">单价</th><th rowspan="2">总金额</th></tr>
+            <tr><th>长</th><th>宽</th></tr>
+            {rows_html}
+            <tr class="bg-blue"><td colspan="8" style="text-align:left;">合计</td><td>{grand_total}</td></tr>
+        </table>
+        <div style="border:1.5px solid black; border-top:none; padding:8px; font-weight:bold;">
+            合计总金额 (大写): <span style="margin-left:20px;">{total_upper}</span>
+        </div>
+        <div class="bg-yellow">
+            1. 付款方式: 确定制作，先安排货款50%的定金，款清发货<br>
+            2. 以上价格不包含运费、安装调试费、测量等费用。<br>
+            汇款账号：张春兰 622848 0329 2739 08775 (农业银行)
+        </div>
+    </div>
+    <script>
+        function exportJPG() {{
+            const target = document.getElementById('paper');
+            html2canvas(target, {{ scale: 2 }}).then(canvas => {{
+                const link = document.createElement('a');
+                link.download = '报价单_{customer}.jpg';
+                link.href = canvas.toDataURL('image/jpeg', 0.9);
+                link.click();
+            }});
+        }}
+    </script>
+</body>
+</html>
+"""
+
+# 在预览区渲染
+st.components.v1.html(html_template, height=1000, scrolling=True)
