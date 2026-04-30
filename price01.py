@@ -16,7 +16,7 @@ def load_library():
     if os.path.exists("library.csv"):
         return pd.read_csv("library.csv")
     else:
-        # 如果没有文件，生成默认测试库
+        # 如果没有文件，自动生成一个默认测试库防报错
         return pd.DataFrame({
             "name": ["0.8的纯铜两定两开门", "0.8的不锈钢镀铜:正面1.2mm镀铜蚀刻", "暗合页（子母）", "门柱花件另加"],
             "unit": ["m²", "m²", "套", "m²"],
@@ -39,22 +39,22 @@ with st.sidebar:
     st.info("提示：在此处修改客户信息，右侧报价单会自动更新。")
 
 # ==========================================
-# 4. 核心工作区：产品明细动态录入 (支持无限加项)
+# 4. 核心工作区：产品明细动态录入 (修复了报错)
 # ==========================================
 st.title("🛒 产品明细与报价单预览")
 st.caption("👇 在下方表格录入产品。点击表格底部的 **➕ 号** 可增加产品行；选中左侧序号按 **Delete 键** 可删除行。")
 
-# 初始化 Session State 以保存表格数据
+# 【关键修复】：确保每次打开都有初始数据，防止 st.session_state 报错
 if 'quote_items' not in st.session_state:
     st.session_state.quote_items = pd.DataFrame([{
         "品名型号": "0.8的纯铜两定两开门", "长_mm": 2480, "宽_mm": 2690, 
         "开启方向": "外右开", "单位": "m²", "数量": 6.6712, "单价": 6000.0
     }])
 
-# 使用 st.data_editor 实现高自由度编辑
+# 渲染高自由度编辑器
 edited_df = st.data_editor(
     st.session_state.quote_items,
-    num_rows="dynamic", # 关键：允许动态加项
+    num_rows="dynamic", # 允许动态加项
     column_config={
         "品名型号": st.column_config.SelectboxColumn("品名型号", options=product_names, required=True, width="large"),
         "开启方向": st.column_config.SelectboxColumn("开启方向", options=["内右开", "内左开", "外右开", "外左开", ""]),
@@ -66,17 +66,15 @@ edited_df = st.data_editor(
     use_container_width=True
 )
 
-# 联动逻辑：如果用户选了产品，自动在后台匹配单位和单价 (如果用户没填的话)
+# 联动逻辑与计算
 for idx, row in edited_df.iterrows():
+    # 如果用户选了库里的产品，自动带入单位
     if pd.notna(row['品名型号']) and row['品名型号'] in product_names:
         matched = df_lib[df_lib['name'] == row['品名型号']].iloc[0]
-        # 如果单位为空，自动填入
-        if pd.isna(row['单位']) or row['单位'] == "":
+        if pd.isna(row['单位']) or str(row['单位']).strip() == "":
             edited_df.at[idx, '单位'] = matched['unit']
-        # 强制更新单价（可根据需要决定是否覆盖用户手填的单价）
-        # edited_df.at[idx, '单价'] = matched['price']
-
-# 自动计算每行总价与合计总金额
+            
+# 自动计算每行总价与合计总金额 (四舍五入到整数)
 edited_df['总金额'] = (edited_df['数量'] * edited_df['单价']).round(0).fillna(0).astype(int)
 grand_total = int(edited_df['总金额'].sum())
 
@@ -122,10 +120,10 @@ for i, row in edited_df.iterrows():
     </tr>
     """
 
-# 补齐空白行（让表格看起来丰满，像原版 Excel）
+# 补齐空白行（让表格看起来丰满，像原版 Excel，至少保留 4 行）
 empty_rows_needed = max(0, 4 - len(edited_df))
 for i in range(empty_rows_needed):
-    rows_html += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>0</td></tr>"
+    rows_html += "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td>0.0000</td><td>0</td><td>0</td></tr>"
 
 # 完整的 HTML 模板 (完美对齐您的截图)
 html_template = f"""
@@ -233,4 +231,35 @@ html_template = f"""
             1. 付款方式: 确定制作，先安排货款50%的定金，款清发货<br>
             2. 以上价格不包含运费、安装调试费、测量等费用。<br>
             3. 请及时确定签字回传，我司以收到贵方签字回传单以及保证金为准，方可安排生产<br>
-            <hr style="border:
+            <hr style="border: 0.5px solid red; margin: 4px 0;">
+            开票资料: 对公账户公司名称杭州浙家门业有限公司账户<br>
+            号码: 3301041060000451769<br>
+            开户银行: 杭州银行富阳支行<br>
+            法定代表人: 王家龙基本存款<br>
+            账户编号: J3310198780901<br>
+            <hr style="border: 0.5px solid red; margin: 4px 0;">
+            汇款请汇入以下账户<br>
+            户名：张春兰<br>
+            账号：622848 0329 2739 08775<br>
+            汇款行农业银行浙江省分行杭州市上泗支行
+        </div>
+    </div>
+
+    <script>
+        function exportJPG() {{
+            const target = document.getElementById('quote-paper');
+            // scale: 2.5 保证截出来的图极其清晰
+            html2canvas(target, {{ scale: 2.5, useCORS: true, backgroundColor: "#ffffff" }}).then(canvas => {{
+                const link = document.createElement('a');
+                link.download = '西州门业报价单_{customer}.jpg';
+                link.href = canvas.toDataURL('image/jpeg', 1.0);
+                link.click();
+            }});
+        }}
+    </script>
+</body>
+</html>
+"""
+
+# 在界面中渲染最终的 HTML 画布
+st.components.v1.html(html_template, height=1150, scrolling=True)
